@@ -102,33 +102,79 @@ ds2api/
 
 ```mermaid
 flowchart LR
-    C[Client/SDK] --> R[internal/server/router.go]
-    R --> OA[OpenAI HTTP API]
-    R --> CA[Claude HTTP API]
-    R --> GA[Gemini HTTP API]
-    R --> AD[Admin HTTP API]
+    C[Client / SDK] --> R[internal/server/router.go]
 
-    CA --> BR[translatorcliproxy]
-    GA --> BR
-    BR --> CORE[internal/httpapi/openai/chat ChatCompletions]
-    OA --> CORE
+    subgraph HTTP[HTTP API surface]
+        OA[internal/httpapi/openai]
+        CHAT[openai/chat]
+        RESP[openai/responses]
+        FILES[openai/files + embeddings]
+        CA[internal/httpapi/claude]
+        GA[internal/httpapi/gemini]
+        AD[internal/httpapi/admin/*]
+        WEB[internal/webui static admin]
+    end
 
-    CORE --> AUTH[internal/auth + config key/account resolver]
-    CORE --> POOL[internal/account queue + concurrency]
-    CORE --> TOOL[internal/toolcall parser + internal/toolstream sieve]
-    CORE --> DS[internal/deepseek/client]
+    subgraph COMPAT[Prompt compatibility core]
+        PC[internal/promptcompat]
+        PROMPT[internal/prompt]
+        HIST[internal/httpapi/openai/history]
+    end
+
+    subgraph RUNTIME[Shared runtime]
+        AUTH[internal/auth]
+        POOL[internal/account queue + concurrency]
+        STREAM[internal/stream + internal/sse]
+        TOOL[internal/toolcall + internal/toolstream]
+        DS[internal/deepseek/client]
+        POW[pow + internal/deepseek/protocol]
+    end
+
+    subgraph NODE[Vercel Node Runtime]
+        NCS[api/chat-stream.js]
+        JS[internal/js/chat-stream + stream-tool-sieve]
+    end
+
+    R --> OA --> CHAT
+    OA --> RESP
+    OA --> FILES
+    R --> CA
+    R --> GA
+    R --> AD
+    R --> WEB
+    R -.Vercel stream.-> NCS
+
+    CA --> PC
+    GA --> PC
+    CHAT --> PC
+    RESP --> PC
+    PC --> PROMPT
+    PC -.长历史.-> HIST
+    PC --> AUTH
+
+    NCS -.Go prepare/release.-> CHAT
+    NCS --> JS
+    JS --> TOOL
+
+    AUTH --> POOL
+    CHAT --> STREAM
+    RESP --> STREAM
+    STREAM --> TOOL
+    POOL --> DS
+    DS --> POW
     DS --> U[DeepSeek upstream]
 ```
 
 ## 3. internal/ 子模块职责
 
 - `internal/server`：路由树和中间件挂载（健康检查、协议入口、Admin/WebUI）。
-- `internal/httpapi/openai/*`：OpenAI HTTP surface，按 chat、responses、files、embeddings、history、shared 拆分。
-- `internal/httpapi/{claude,gemini}`：协议输入输出适配，不重复实现上游调用逻辑。
+- `internal/httpapi/openai/*`：OpenAI HTTP surface，按 chat、responses、files、embeddings、history、shared 拆分；chat/responses 共享 promptcompat、stream、toolcall 等核心语义。
+- `internal/httpapi/{claude,gemini}`：协议输入输出适配，归一到同一套 prompt compatibility 语义，不重复实现上游调用逻辑。
 - `internal/promptcompat`：OpenAI/Claude/Gemini 请求到 DeepSeek 网页纯文本上下文的兼容内核。
 - `internal/translatorcliproxy`：Claude/Gemini 与 OpenAI 结构互转。
 - `internal/deepseek/{client,protocol,transport}`：上游请求、会话、PoW 适配、协议常量与传输层。
-- `internal/stream` + `internal/sse`：流式解析与增量处理。
+- `internal/js/chat-stream` + `api/chat-stream.js`：Vercel Node 流式桥；Go prepare/release 管理鉴权、账号租约和 completion payload，Node 侧负责实时 SSE 转发并保持 Go 对齐的终结态和 tool sieve 语义。
+- `internal/stream` + `internal/sse`：Go 流式解析与增量处理。
 - `internal/toolcall` + `internal/toolstream`：canonical XML 工具调用解析与防泄漏筛分（唯一可执行格式：`<tool_calls>` / `<invoke name="...">` / `<parameter name="...">`）。
 - `internal/httpapi/admin/*`：Admin API 根装配与 auth/accounts/config/settings/proxies/rawsamples/vercel/history/devcapture/version 等资源子包。
 - `internal/chathistory`：服务器端对话记录持久化、分页、单条详情和保留策略。

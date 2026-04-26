@@ -102,33 +102,79 @@ ds2api/
 
 ```mermaid
 flowchart LR
-    C[Client/SDK] --> R[internal/server/router.go]
-    R --> OA[OpenAI HTTP API]
-    R --> CA[Claude HTTP API]
-    R --> GA[Gemini HTTP API]
-    R --> AD[Admin HTTP API]
+    C[Client / SDK] --> R[internal/server/router.go]
 
-    CA --> BR[translatorcliproxy]
-    GA --> BR
-    BR --> CORE[internal/httpapi/openai/chat ChatCompletions]
-    OA --> CORE
+    subgraph HTTP[HTTP API surface]
+        OA[internal/httpapi/openai]
+        CHAT[openai/chat]
+        RESP[openai/responses]
+        FILES[openai/files + embeddings]
+        CA[internal/httpapi/claude]
+        GA[internal/httpapi/gemini]
+        AD[internal/httpapi/admin/*]
+        WEB[internal/webui static admin]
+    end
 
-    CORE --> AUTH[internal/auth + config key/account resolver]
-    CORE --> POOL[internal/account queue + concurrency]
-    CORE --> TOOL[internal/toolcall parser + internal/toolstream sieve]
-    CORE --> DS[internal/deepseek/client]
+    subgraph COMPAT[Prompt compatibility core]
+        PC[internal/promptcompat]
+        PROMPT[internal/prompt]
+        HIST[internal/httpapi/openai/history]
+    end
+
+    subgraph RUNTIME[Shared runtime]
+        AUTH[internal/auth]
+        POOL[internal/account queue + concurrency]
+        STREAM[internal/stream + internal/sse]
+        TOOL[internal/toolcall + internal/toolstream]
+        DS[internal/deepseek/client]
+        POW[pow + internal/deepseek/protocol]
+    end
+
+    subgraph NODE[Vercel Node Runtime]
+        NCS[api/chat-stream.js]
+        JS[internal/js/chat-stream + stream-tool-sieve]
+    end
+
+    R --> OA --> CHAT
+    OA --> RESP
+    OA --> FILES
+    R --> CA
+    R --> GA
+    R --> AD
+    R --> WEB
+    R -.Vercel stream.-> NCS
+
+    CA --> PC
+    GA --> PC
+    CHAT --> PC
+    RESP --> PC
+    PC --> PROMPT
+    PC -.long history.-> HIST
+    PC --> AUTH
+
+    NCS -.Go prepare/release.-> CHAT
+    NCS --> JS
+    JS --> TOOL
+
+    AUTH --> POOL
+    CHAT --> STREAM
+    RESP --> STREAM
+    STREAM --> TOOL
+    POOL --> DS
+    DS --> POW
     DS --> U[DeepSeek upstream]
 ```
 
 ## 3. Responsibilities in `internal/`
 
 - `internal/server`: router tree + middlewares (health, protocol routes, Admin/WebUI).
-- `internal/httpapi/openai/*`: OpenAI HTTP surface split into chat, responses, files, embeddings, history, and shared packages.
-- `internal/httpapi/{claude,gemini}`: protocol wrappers only (no duplicated upstream execution).
+- `internal/httpapi/openai/*`: OpenAI HTTP surface split into chat, responses, files, embeddings, history, and shared packages; chat/responses share the promptcompat, stream, and toolcall semantics.
+- `internal/httpapi/{claude,gemini}`: protocol wrappers that normalize into the same prompt compatibility semantics without duplicating upstream execution.
 - `internal/promptcompat`: compatibility core for turning OpenAI/Claude/Gemini requests into DeepSeek web-chat plain-text context.
 - `internal/translatorcliproxy`: structure translation between Claude/Gemini and OpenAI.
 - `internal/deepseek/{client,protocol,transport}`: upstream requests, sessions, PoW adaptation, protocol constants, and transport details.
-- `internal/stream` + `internal/sse`: stream parsing and incremental assembly.
+- `internal/js/chat-stream` + `api/chat-stream.js`: Vercel Node streaming bridge; Go prepare/release owns auth, account lease, and completion payload assembly, while Node relays real-time SSE with Go-aligned finalization and tool sieve semantics.
+- `internal/stream` + `internal/sse`: Go stream parsing and incremental assembly.
 - `internal/toolcall` + `internal/toolstream`: canonical XML tool-call parsing + anti-leak sieve (the only executable format is `<tool_calls>` / `<invoke name="...">` / `<parameter name="...">`).
 - `internal/httpapi/admin/*`: Admin API root assembly plus auth/accounts/config/settings/proxies/rawsamples/vercel/history/devcapture/version resource packages.
 - `internal/chathistory`: server-side conversation history persistence, pagination, detail lookup, and retention policy.

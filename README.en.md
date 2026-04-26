@@ -33,25 +33,27 @@ flowchart LR
     Client["🖥️ Clients / SDKs\n(OpenAI / Claude / Gemini)"]
     Upstream["☁️ DeepSeek API"]
 
-    subgraph DS2API["DS2API 3.x (Unified OpenAI Core)"]
+    subgraph DS2API["DS2API 4.x (Modular HTTP Surface + PromptCompat Core)"]
         Router["chi Router + Middleware\n(RequestID / RealIP / Logger / Recoverer / CORS)"]
 
-        subgraph Adapters["Protocol Adapters"]
-            OA["OpenAI\n/v1/*"]
+        subgraph HTTP["HTTP API Surface"]
+            OA["OpenAI\nchat / responses / files / embeddings"]
             CA["Claude\n/anthropic/* + /v1/messages"]
             GA["Gemini\n/v1beta/models/* + /v1/models/*"]
-            Admin["Admin API\n/admin/*"]
+            Admin["Admin API\nresource packages"]
             WebUI["WebUI\n/admin (static hosting)"]
+            Vercel["Vercel Node Stream\n/v1/chat/completions"]
         end
 
         subgraph Runtime["Runtime + Core Capabilities"]
-            Bridge["CLIProxy Bridge\n(multi-protocol <-> OpenAI)"]
-            OAEngine["OpenAI ChatCompletions\n(unified tools + stream semantics)"]
+            Compat["PromptCompat\n(API -> web-chat plain text context)"]
+            Chat["Chat / Responses Runtime\n(unified tools + stream semantics)"]
             Auth["Auth Resolver\n(API key / bearer / x-goog-api-key)"]
             Pool["Account Pool + Queue\n(in-flight slots + wait queue)"]
-            DSClient["DeepSeek Client\n(session / auth / HTTP)"]
-            Pow["PoW Solver\n(Pure Go ms-level)"]
+            DSClient["DeepSeek Client\n(session / auth / completion / files)"]
+            Pow["PoW Solver\n(Pure Go)"]
             Tool["Tool Sieve\n(Go/Node semantic parity)"]
+            History["History Split\n(long history as files)"]
         end
     end
 
@@ -59,19 +61,23 @@ flowchart LR
     Router --> OA & CA & GA
     Router --> Admin
     Router --> WebUI
+    Router --> Vercel
 
-    OA --> OAEngine
-    CA & GA --> Bridge
-    Bridge --> OAEngine
-    OAEngine --> Auth
-    OAEngine -.account rotation.-> Pool
-    OAEngine -.tool-call parsing.-> Tool
-    OAEngine -.PoW solving.-> Pow
+    OA --> Compat
+    CA & GA --> Compat
+    Compat --> Chat
+    Compat -.long history.-> History
+    Vercel -.Go prepare.-> Chat
+    Vercel -.Node SSE.-> Tool
+    Chat --> Auth
+    Chat -.account rotation.-> Pool
+    Chat -.tool-call parsing.-> Tool
+    Chat -.PoW solving.-> Pow
     Auth --> DSClient
     DSClient --> Upstream
     Upstream --> DSClient
-    OAEngine --> Bridge
-    Bridge --> Client
+    Chat --> Client
+    Vercel --> Client
 ```
 
 For the full module-by-module architecture and directory responsibilities, see [docs/ARCHITECTURE.en.md](docs/ARCHITECTURE.en.md).

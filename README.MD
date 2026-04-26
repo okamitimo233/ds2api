@@ -35,25 +35,27 @@ flowchart LR
     Client["🖥️ 客户端 / SDK\n(OpenAI / Claude / Gemini)"]
     Upstream["☁️ DeepSeek API"]
 
-    subgraph DS2API["DS2API 3.x（统一 OpenAI 内核）"]
+    subgraph DS2API["DS2API 4.x（模块化 HTTP surface + PromptCompat 内核）"]
         Router["chi Router + 中间件\n(RequestID / RealIP / Logger / Recoverer / CORS)"]
 
-        subgraph Adapters["协议适配层"]
-            OA["OpenAI\n/v1/*"]
+        subgraph HTTP["HTTP API surface"]
+            OA["OpenAI\nchat / responses / files / embeddings"]
             CA["Claude\n/anthropic/* + /v1/messages"]
             GA["Gemini\n/v1beta/models/* + /v1/models/*"]
-            Admin["Admin API\n/admin/*"]
+            Admin["Admin API\n资源子包"]
             WebUI["WebUI\n/admin（静态托管）"]
+            Vercel["Vercel Node Stream\n/v1/chat/completions"]
         end
 
         subgraph Runtime["运行时核心能力"]
-            Bridge["CLIProxy 转换桥\n(多协议 <-> OpenAI)"]
-            OAEngine["OpenAI ChatCompletions\n(统一工具调用与流式语义)"]
+            Compat["PromptCompat\n(API -> 网页纯文本上下文)"]
+            Chat["Chat / Responses Runtime\n(统一工具调用与流式语义)"]
             Auth["Auth Resolver\n(API key / bearer / x-goog-api-key)"]
             Pool["Account Pool + Queue\n(并发槽位 + 等待队列)"]
-            DSClient["DeepSeek Client\n(Session / Auth / HTTP)"]
-            Pow["PoW 实现\n(纯 Go 毫秒级)"]
+            DSClient["DeepSeek Client\n(Session / Auth / Completion / Files)"]
+            Pow["PoW 实现\n(纯 Go)"]
             Tool["Tool Sieve\n(Go/Node 语义对齐)"]
+            History["History Split\n(长历史文件化)"]
         end
     end
 
@@ -61,19 +63,23 @@ flowchart LR
     Router --> OA & CA & GA
     Router --> Admin
     Router --> WebUI
+    Router --> Vercel
 
-    OA --> OAEngine
-    CA & GA --> Bridge
-    Bridge --> OAEngine
-    OAEngine --> Auth
-    OAEngine -.账号轮询.-> Pool
-    OAEngine -.工具调用解析.-> Tool
-    OAEngine -.PoW 计算.-> Pow
+    OA --> Compat
+    CA & GA --> Compat
+    Compat --> Chat
+    Compat -.长历史.-> History
+    Vercel -.Go prepare.-> Chat
+    Vercel -.Node SSE.-> Tool
+    Chat --> Auth
+    Chat -.账号轮询.-> Pool
+    Chat -.工具调用解析.-> Tool
+    Chat -.PoW 计算.-> Pow
     Auth --> DSClient
     DSClient --> Upstream
     Upstream --> DSClient
-    OAEngine --> Bridge
-    Bridge --> Client
+    Chat --> Client
+    Vercel --> Client
 ```
 
 详细架构拆分与目录职责见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
