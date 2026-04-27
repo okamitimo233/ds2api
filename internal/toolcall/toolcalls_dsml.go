@@ -6,13 +6,13 @@ func normalizeDSMLToolCallMarkup(text string) (string, bool) {
 	if text == "" {
 		return "", true
 	}
-	hasDSML, hasCanonical := toolMarkupStylesOutsideIgnored(text)
-	if hasDSML && hasCanonical {
-		return text, false
-	}
-	if !hasDSML {
+	hasAliasLikeMarkup, _ := toolMarkupStylesOutsideIgnored(text)
+	if !hasAliasLikeMarkup {
 		return text, true
 	}
+	// Always normalize DSML aliases to canonical form, even when canonical
+	// tags coexist. Models frequently mix DSML wrapper tags with canonical
+	// inner tags (e.g., <｜tool_calls><invoke name="...">).
 	return replaceDSMLToolMarkupOutsideIgnored(text), true
 }
 
@@ -26,6 +26,24 @@ var dsmlToolMarkupAliases = []struct {
 	{"</|dsml|invoke>", "</invoke>"},
 	{"<|dsml|parameter", "<parameter"},
 	{"</|dsml|parameter>", "</parameter>"},
+	{"<dsml|tool_calls", "<tool_calls"},
+	{"</dsml|tool_calls>", "</tool_calls>"},
+	{"<dsml|invoke", "<invoke"},
+	{"</dsml|invoke>", "</invoke>"},
+	{"<dsml|parameter", "<parameter"},
+	{"</dsml|parameter>", "</parameter>"},
+	{"<|tool_calls", "<tool_calls"},
+	{"</|tool_calls>", "</tool_calls>"},
+	{"<|invoke", "<invoke"},
+	{"</|invoke>", "</invoke>"},
+	{"<|parameter", "<parameter"},
+	{"</|parameter>", "</parameter>"},
+	{"<｜tool_calls", "<tool_calls"},
+	{"</｜tool_calls>", "</tool_calls>"},
+	{"<｜invoke", "<invoke"},
+	{"</｜invoke>", "</invoke>"},
+	{"<｜parameter", "<parameter"},
+	{"</｜parameter>", "</parameter>"},
 }
 
 var canonicalToolMarkupPrefixes = []string{

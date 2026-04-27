@@ -66,10 +66,90 @@ test('parseToolCalls keeps canonical XML examples inside DSML CDATA', () => {
   assert.deepEqual(calls[0].input, { path: 'notes.md', content });
 });
 
-test('parseToolCalls rejects mixed DSML and XML tool tags', () => {
+test('parseToolCalls normalizes mixed DSML and XML tool tags', () => {
+  // Models commonly mix DSML wrapper tags with canonical inner tags.
   const payload = '<|DSML|tool_calls><invoke name="read_file"><|DSML|parameter name="path">README.MD</|DSML|parameter></invoke></|DSML|tool_calls>';
   const calls = parseToolCalls(payload, ['read_file']);
-  assert.equal(calls.length, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'read_file');
+  assert.deepEqual(calls[0].input, { path: 'README.MD' });
+});
+
+test('parseToolCalls skips prose mention of same wrapper variant', () => {
+  const payload = [
+    'Summary: support canonical <tool_calls> and DSML <|DSML|tool_calls> wrappers.',
+    '',
+    '<|DSML|tool_calls>',
+    '<|DSML|invoke name="Bash">',
+    '<|DSML|parameter name="command"><![CDATA[git status]]></|DSML|parameter>',
+    '</|DSML|invoke>',
+    '</|DSML|tool_calls>',
+  ].join('\n');
+  const calls = parseToolCalls(payload, ['Bash']);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'Bash');
+  assert.equal(calls[0].input.command, 'git status');
+});
+
+test('sieve emits tool_calls after prose mentions same wrapper variant', () => {
+  const events = runSieve([
+    'Summary: support canonical <tool_calls> and DSML <|DSML|tool_calls> wrappers.\n\n',
+    '<|DSML|tool_calls>\n',
+    '<|DSML|invoke name="Bash">\n',
+    '<|DSML|parameter name="command"><![CDATA[git status]]></|DSML|parameter>\n',
+    '</|DSML|invoke>\n',
+    '</|DSML|tool_calls>',
+  ], ['Bash']);
+  const finalCalls = events.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  assert.equal(finalCalls.length, 1);
+  assert.equal(finalCalls[0].name, 'Bash');
+  assert.equal(finalCalls[0].input.command, 'git status');
+  assert.equal(collectText(events).includes('Summary:'), true);
+});
+
+test('sieve preserves review body with alias mentions before real DSML tool calls', () => {
+  const events = runSieve([
+    "Done reviewing the diff. Here's my analysis before we commit:\n\n",
+    'Summary of Changes\n',
+    'DSML wrapper variant support — recognize aliases (<dsml|tool_calls>, <|tool_calls>, <｜tool_calls>) alongside canonical <tool_calls> and <|DSML|tool_calls> wrappers.\n\n',
+    '<|DSML|tool_calls>\n',
+    '<|DSML|invoke name="Bash">\n',
+    '<|DSML|parameter name="command"><![CDATA[git add docs/toolcall-semantics.md internal/toolstream/tool_sieve_xml.go]]></|DSML|parameter>\n',
+    '<|DSML|parameter name="description"><![CDATA[Stage all relevant changed files]]></|DSML|parameter>\n',
+    '</|DSML|invoke>\n',
+    '<|DSML|invoke name="Bash">\n',
+    '<|DSML|parameter name="command"><![CDATA[git commit -m "$(cat <<\'EOF\'\nfeat(toolstream): expand DSML wrapper detection\n\nSupport DSML wrapper aliases: <dsml|tool_calls>, <|tool_calls>, <｜tool_calls> alongside existing canonical wrappers.\nEOF\n)"]]></|DSML|parameter>\n',
+    '<|DSML|parameter name="description"><![CDATA[Create commit with all staged changes]]></|DSML|parameter>\n',
+    '</|DSML|invoke>\n',
+    '</|DSML|tool_calls>',
+  ], ['Bash']);
+  const text = collectText(events);
+  const finalCalls = events.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  assert.equal(finalCalls.length, 2);
+  assert.equal(text.includes('<|DSML|tool_calls> wrappers'), true);
+  assert.equal(text.includes('Summary of Changes'), true);
+  assert.equal(text.includes('git add docs/toolcall-semantics.md'), false);
+});
+
+test('sieve preserves Chinese review body with inline DSML mention before real tool call', () => {
+  const events = runSieve([
+    '# Context from my IDE setup:\n\n## My request for Codex:\n',
+    '基于我的审查，这是工作区更改的总结和提交。\n\n## 审查报告\n\n### 文档\n\nAPI.md 中的工具调用部分缺少针对新 DSML 别名的更新——它只提到了 `',
+    '<|DSML|tool_calls>` 和 canonical `<tool_calls>`。由于这涉及 API 兼容性和文档准确性，需要在下游进行记录。\n\n',
+    '### 代码\n\n所有更改现在一致地处理四个 DSML wrapper 变体。\n\n现在提交已暂存的更改。\n\n',
+    '<|DSML|tool_calls>\n',
+    '  <|DSML|invoke name="Bash">\n',
+    '    <|DSML|parameter name="command"><![CDATA[git commit -m "$(cat <<\'EOF\'\nfeat: expand DSML tool-call alias and fence handling\nEOF\n)"]]></|DSML|parameter>\n',
+    '    <|DSML|parameter name="description"><![CDATA[Commit staged changes]]></|DSML|parameter>\n',
+    '  </|DSML|invoke>\n',
+    '</|DSML|tool_calls>\n\n补充',
+  ], ['Bash']);
+  const text = collectText(events);
+  const finalCalls = events.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  assert.equal(finalCalls.length, 1);
+  assert.equal(text.includes('它只提到了 `<|DSML|tool_calls>` 和 canonical `<tool_calls>`。由于这涉及 API 兼容性'), true);
+  assert.equal(text.includes('补充'), true);
+  assert.equal(text.includes('<|DSML|invoke'), false);
 });
 
 test('parseToolCalls ignores JSON tool_calls payload (XML-only)', () => {

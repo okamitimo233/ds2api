@@ -8,7 +8,7 @@ const {
   stripFencedCodeBlocks,
 } = require('./parse_payload');
 
-const TOOL_MARKUP_PREFIXES = ['<tool_calls', '<|dsml|tool_calls'];
+const TOOL_MARKUP_PREFIXES = ['<tool_calls', '<|dsml|tool_calls', '<dsml|tool_calls', '<｜tool_calls', '<|tool_calls'];
 
 function extractToolNames(tools) {
   if (!Array.isArray(tools) || tools.length === 0) {

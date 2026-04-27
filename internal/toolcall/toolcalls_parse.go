@@ -93,7 +93,11 @@ func filterToolCallsDetailed(parsed []ParsedToolCall) ([]ParsedToolCall, []strin
 
 func looksLikeToolCallSyntax(text string) bool {
 	lower := strings.ToLower(text)
-	return strings.Contains(lower, "<|dsml|tool_calls") || strings.Contains(lower, "<tool_calls")
+	return strings.Contains(lower, "<|dsml|tool_calls") ||
+		strings.Contains(lower, "<dsml|tool_calls") ||
+		strings.Contains(lower, "<｜tool_calls") ||
+		strings.Contains(lower, "<|tool_calls") ||
+		strings.Contains(lower, "<tool_calls")
 }
 
 func stripFencedCodeBlocks(text string) string {
@@ -107,6 +111,9 @@ func stripFencedCodeBlocks(text string) string {
 	inFence := false
 	fenceMarker := ""
 	inCDATA := false
+	// Track builder length when a fence opens so we can preserve content
+	// collected before the unclosed fence.
+	beforeFenceLen := 0
 	for _, line := range lines {
 		if inCDATA || cdataStartsBeforeFence(line) {
 			b.WriteString(line)
@@ -118,6 +125,7 @@ func stripFencedCodeBlocks(text string) string {
 			if marker, ok := parseFenceOpen(trimmed); ok {
 				inFence = true
 				fenceMarker = marker
+				beforeFenceLen = b.Len()
 				continue
 			}
 			b.WriteString(line)
@@ -131,6 +139,12 @@ func stripFencedCodeBlocks(text string) string {
 	}
 
 	if inFence {
+		// Unclosed fence: preserve content that was collected before the
+		// fence started rather than dropping everything.
+		result := b.String()
+		if beforeFenceLen > 0 && beforeFenceLen <= len(result) {
+			return result[:beforeFenceLen]
+		}
 		return ""
 	}
 	return b.String()

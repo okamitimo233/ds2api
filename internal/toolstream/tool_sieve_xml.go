@@ -9,13 +9,22 @@ import (
 // --- XML tool call support for the streaming sieve ---
 
 //nolint:unused // kept as explicit tag inventory for future XML sieve refinements.
-var xmlToolCallClosingTags = []string{"</tool_calls>", "</|dsml|tool_calls>"}
-var xmlToolCallOpeningTags = []string{"<tool_calls", "<invoke", "<|dsml|tool_calls", "<|dsml|invoke"}
+var xmlToolCallClosingTags = []string{"</tool_calls>", "</|dsml|tool_calls>", "</dsml|tool_calls>", "</｜tool_calls>", "</|tool_calls>"}
+var xmlToolCallOpeningTags = []string{
+	"<tool_calls", "<invoke",
+	"<|dsml|tool_calls", "<|dsml|invoke",
+	"<dsml|tool_calls", "<dsml|invoke",
+	"<｜tool_calls", "<｜invoke",
+	"<|tool_calls", "<|invoke",
+}
 
 // xmlToolCallTagPairs maps each opening tag to its expected closing tag.
 // Order matters: longer/wrapper tags must be checked first.
 var xmlToolCallTagPairs = []struct{ open, close string }{
 	{"<|dsml|tool_calls", "</|dsml|tool_calls>"},
+	{"<dsml|tool_calls", "</dsml|tool_calls>"},
+	{"<｜tool_calls", "</｜tool_calls>"},
+	{"<|tool_calls", "</|tool_calls>"},
 	{"<tool_calls", "</tool_calls>"},
 }
 
@@ -28,38 +37,80 @@ var xmlToolCallBlockPattern = regexp.MustCompile(`(?is)((?:<tool_calls\b|<\|dsml
 var xmlToolTagsToDetect = []string{
 	"<|dsml|tool_calls>", "<|dsml|tool_calls\n", "<|dsml|tool_calls ",
 	"<|dsml|invoke ", "<|dsml|invoke\n", "<|dsml|invoke\t", "<|dsml|invoke\r",
+	"<dsml|tool_calls>", "<dsml|tool_calls\n", "<dsml|tool_calls ",
+	"<dsml|invoke ", "<dsml|invoke\n", "<dsml|invoke\t", "<dsml|invoke\r",
+	"<｜tool_calls>", "<｜tool_calls\n", "<｜tool_calls ",
+	"<｜invoke ", "<｜invoke\n", "<｜invoke\t", "<｜invoke\r",
+	"<|tool_calls>", "<|tool_calls\n", "<|tool_calls ",
+	"<|invoke ", "<|invoke\n", "<|invoke\t", "<|invoke\r",
 	"<tool_calls>", "<tool_calls\n", "<tool_calls ", "<invoke ", "<invoke\n", "<invoke\t", "<invoke\r",
 }
 
 // consumeXMLToolCapture tries to extract complete XML tool call blocks from captured text.
 func consumeXMLToolCapture(captured string, toolNames []string) (prefix string, calls []toolcall.ParsedToolCall, suffix string, ready bool) {
 	lower := strings.ToLower(captured)
-	// Find the FIRST matching open/close pair for the canonical wrapper.
-	for _, pair := range xmlToolCallTagPairs {
-		openIdx := strings.Index(lower, pair.open)
-		if openIdx < 0 {
-			continue
-		}
-		// Find the matching closing tag outside CDATA. Long write-file tool
-		// calls often contain XML examples in CDATA, including </tool_calls>.
-		closeIdx := findXMLCloseOutsideCDATA(captured, pair.close, openIdx+len(pair.open))
-		if closeIdx < 0 {
-			// Opening tag is present but its specific closing tag hasn't arrived.
-			// Return not-ready so we keep buffering until the canonical wrapper closes.
-			return "", nil, "", false
-		}
-		closeEnd := closeIdx + len(pair.close)
+	anyOpenFound := false
+	type candidate struct {
+		start  int
+		prefix string
+		calls  []toolcall.ParsedToolCall
+		suffix string
+	}
+	type rejectedBlock struct {
+		start  int
+		prefix string
+		suffix string
+	}
+	var best *candidate
+	var rejected *rejectedBlock
 
-		xmlBlock := captured[openIdx:closeEnd]
-		prefixPart := captured[:openIdx]
-		suffixPart := captured[closeEnd:]
-		parsed := toolcall.ParseToolCalls(xmlBlock, toolNames)
-		if len(parsed) > 0 {
-			prefixPart, suffixPart = trimWrappingJSONFence(prefixPart, suffixPart)
-			return prefixPart, parsed, suffixPart, true
+	// Scan every wrapper occurrence. Prose can mention a wrapper tag before the
+	// actual tool block, including the same variant as the real block.
+	for _, pair := range xmlToolCallTagPairs {
+		searchFrom := 0
+		for searchFrom < len(lower) {
+			openIdx := findXMLOpenOutsideCDATA(captured, pair.open, searchFrom)
+			if openIdx < 0 {
+				break
+			}
+			// Find the matching closing tag outside CDATA. Long write-file tool
+			// calls often contain XML examples in CDATA, including </tool_calls>.
+			closeIdx := findMatchingXMLToolWrapperClose(captured, pair.open, pair.close, openIdx)
+			if closeIdx < 0 {
+				anyOpenFound = true
+				searchFrom = openIdx + len(pair.open)
+				continue
+			}
+			closeEnd := closeIdx + len(pair.close)
+
+			xmlBlock := captured[openIdx:closeEnd]
+			prefixPart := captured[:openIdx]
+			suffixPart := captured[closeEnd:]
+			parsed := toolcall.ParseToolCalls(xmlBlock, toolNames)
+			if len(parsed) > 0 {
+				prefixPart, suffixPart = trimWrappingJSONFence(prefixPart, suffixPart)
+				if best == nil || openIdx < best.start {
+					best = &candidate{start: openIdx, prefix: prefixPart, calls: parsed, suffix: suffixPart}
+				}
+				break
+			}
+			if rejected == nil || openIdx < rejected.start {
+				rejected = &rejectedBlock{start: openIdx, prefix: prefixPart + xmlBlock, suffix: suffixPart}
+			}
+			searchFrom = openIdx + len(pair.open)
 		}
+	}
+	if best != nil {
+		return best.prefix, best.calls, best.suffix, true
+	}
+	if anyOpenFound {
+		// At least one opening tag was found but none had a matching close tag.
+		// Keep buffering until a closing tag arrives.
+		return "", nil, "", false
+	}
+	if rejected != nil {
 		// If this block failed to become a tool call, pass it through as text.
-		return prefixPart + xmlBlock, nil, suffixPart, true
+		return rejected.prefix, nil, rejected.suffix, true
 	}
 	if !containsAnyToolCallWrapper(lower) {
 		invokeIdx, dsml := firstInvokeIndex(lower)
@@ -84,6 +135,88 @@ func consumeXMLToolCapture(captured string, toolNames []string) (prefix string, 
 		}
 	}
 	return "", nil, "", false
+}
+
+func findMatchingXMLToolWrapperClose(s, openTag, closeTag string, openIdx int) int {
+	if s == "" || openTag == "" || closeTag == "" || openIdx < 0 {
+		return -1
+	}
+	lower := strings.ToLower(s)
+	openTarget := strings.ToLower(openTag)
+	closeTarget := strings.ToLower(closeTag)
+	depth := 1
+	for i := openIdx + len(openTarget); i < len(s); {
+		switch {
+		case strings.HasPrefix(lower[i:], "<![cdata["):
+			end := strings.Index(lower[i+len("<![cdata["):], "]]>")
+			if end < 0 {
+				return -1
+			}
+			i += len("<![cdata[") + end + len("]]>")
+		case strings.HasPrefix(lower[i:], "<!--"):
+			end := strings.Index(lower[i+len("<!--"):], "-->")
+			if end < 0 {
+				return -1
+			}
+			i += len("<!--") + end + len("-->")
+		case strings.HasPrefix(lower[i:], closeTarget):
+			depth--
+			if depth == 0 {
+				return i
+			}
+			i += len(closeTarget)
+		case strings.HasPrefix(lower[i:], openTarget) && hasXMLToolTagBoundary(s, i+len(openTarget)):
+			depth++
+			i += len(openTarget)
+		default:
+			i++
+		}
+	}
+	return -1
+}
+
+func findXMLOpenOutsideCDATA(s, openTag string, start int) int {
+	if s == "" || openTag == "" {
+		return -1
+	}
+	if start < 0 {
+		start = 0
+	}
+	lower := strings.ToLower(s)
+	target := strings.ToLower(openTag)
+	for i := start; i < len(s); {
+		switch {
+		case strings.HasPrefix(lower[i:], "<![cdata["):
+			end := strings.Index(lower[i+len("<![cdata["):], "]]>")
+			if end < 0 {
+				return -1
+			}
+			i += len("<![cdata[") + end + len("]]>")
+		case strings.HasPrefix(lower[i:], "<!--"):
+			end := strings.Index(lower[i+len("<!--"):], "-->")
+			if end < 0 {
+				return -1
+			}
+			i += len("<!--") + end + len("-->")
+		case strings.HasPrefix(lower[i:], target) && hasXMLToolTagBoundary(s, i+len(target)):
+			return i
+		default:
+			i++
+		}
+	}
+	return -1
+}
+
+func hasXMLToolTagBoundary(text string, idx int) bool {
+	if idx >= len(text) {
+		return true
+	}
+	switch text[idx] {
+	case ' ', '\t', '\n', '\r', '>', '/':
+		return true
+	default:
+		return false
+	}
 }
 
 // hasOpenXMLToolTag returns true if captured text contains an XML tool opening tag
@@ -144,12 +277,24 @@ func shouldKeepBareInvokeCapture(captured string) bool {
 }
 
 func containsAnyToolCallWrapper(lower string) bool {
-	return strings.Contains(lower, "<tool_calls") || strings.Contains(lower, "<|dsml|tool_calls")
+	return strings.Contains(lower, "<tool_calls") ||
+		strings.Contains(lower, "<|dsml|tool_calls") ||
+		strings.Contains(lower, "<dsml|tool_calls") ||
+		strings.Contains(lower, "<｜tool_calls") ||
+		strings.Contains(lower, "<|tool_calls")
 }
 
 func firstInvokeIndex(lower string) (int, bool) {
 	xmlIdx := strings.Index(lower, "<invoke")
-	dsmlIdx := strings.Index(lower, "<|dsml|invoke")
+	// Check all DSML-like invoke prefixes.
+	dsmlPrefixes := []string{"<|dsml|invoke", "<dsml|invoke", "<｜invoke", "<|invoke"}
+	dsmlIdx := -1
+	for _, prefix := range dsmlPrefixes {
+		idx := strings.Index(lower, prefix)
+		if idx >= 0 && (dsmlIdx < 0 || idx < dsmlIdx) {
+			dsmlIdx = idx
+		}
+	}
 	switch {
 	case xmlIdx < 0:
 		return dsmlIdx, dsmlIdx >= 0

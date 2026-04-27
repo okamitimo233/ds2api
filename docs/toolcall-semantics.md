@@ -51,11 +51,13 @@
 
 在流式链路中（Go / Node 一致）：
 
-- DSML `<|DSML|tool_calls>` wrapper 和 canonical `<tool_calls>` wrapper 都会进入结构化捕获
+- DSML `<|DSML|tool_calls>` wrapper 及其兼容变体（`<dsml|tool_calls>`、`<｜tool_calls>`、`<|tool_calls>`）和 canonical `<tool_calls>` wrapper 都会进入结构化捕获
 - 如果流里直接从 invoke 开始，但后面补上了 closing wrapper，Go 流式筛分也会按缺失 opening wrapper 的修复路径尝试恢复
 - 已识别成功的工具调用不会再次回流到普通文本
 - 不符合新格式的块不会执行，并继续按原样文本透传
-- fenced code block 中的 XML 示例始终按普通文本处理
+- fenced code block（反引号 `` ``` `` 和波浪线 `~~~`）中的 XML 示例始终按普通文本处理
+- 支持嵌套围栏（如 4 反引号嵌套 3 反引号）和 CDATA 内围栏保护
+- 当文本中 mention 了某种标签名（如 `<dsml|tool_calls>` 或 Markdown inline code 里的 `<|DSML|tool_calls>`）而后面紧跟真正工具调用时，sieve 会跳过不可解析的 mention 候选并继续匹配后续真实工具块，不会因 mention 导致工具调用丢失，也不会截断 mention 后的正文
 
 ## 4) 输出结构
 
@@ -85,5 +87,10 @@ node --test tests/node/stream-tool-sieve.test.js
 
 - DSML `<|DSML|tool_calls>` wrapper 正常解析
 - legacy canonical `<tool_calls>` wrapper 正常解析
+- 别名变体（`<dsml|tool_calls>`、`<｜tool_calls>`、`<|tool_calls>`）正常解析
+- 混搭标签（DSML wrapper + canonical inner）归一化后正常解析
+- 波浪线围栏 `~~~` 内的示例不执行
+- 嵌套围栏（4 反引号嵌套 3 反引号）内的示例不执行
+- 文本 mention 标签名后紧跟真正工具调用的场景（含同一 wrapper 变体）
 - 非兼容内容按普通文本透传
 - 代码块示例不执行

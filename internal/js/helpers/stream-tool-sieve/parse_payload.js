@@ -13,7 +13,102 @@ function stripFencedCodeBlocks(text) {
   if (!t) {
     return '';
   }
-  return t.replace(/```[\s\S]*?```/g, ' ');
+  const lines = t.split('\n');
+  const out = [];
+  let inFence = false;
+  let fenceChar = '';
+  let fenceLen = 0;
+  let inCDATA = false;
+  let beforeFenceIdx = 0;
+
+  for (let li = 0; li < lines.length; li += 1) {
+    const line = lines[li];
+    const lineWithNL = li < lines.length - 1 ? line + '\n' : line;
+
+    // CDATA protection
+    if (inCDATA || cdataStartsBeforeFence(line)) {
+      out.push(lineWithNL);
+      inCDATA = updateCDATAStateLine(inCDATA, line);
+      continue;
+    }
+
+    const trimmed = line.replace(/^[ \t]+/, '');
+    if (!inFence) {
+      const fence = parseFenceOpenLine(trimmed);
+      if (fence) {
+        inFence = true;
+        fenceChar = fence.ch;
+        fenceLen = fence.count;
+        beforeFenceIdx = out.length;
+        continue;
+      }
+      out.push(lineWithNL);
+      continue;
+    }
+
+    if (isFenceCloseLine(trimmed, fenceChar, fenceLen)) {
+      inFence = false;
+      fenceChar = '';
+      fenceLen = 0;
+    }
+  }
+
+  if (inFence) {
+    // Unclosed fence: keep content before the fence started.
+    if (beforeFenceIdx > 0) {
+      return out.slice(0, beforeFenceIdx).join('');
+    }
+    return '';
+  }
+  return out.join('');
+}
+
+function parseFenceOpenLine(trimmed) {
+  if (trimmed.length < 3) return null;
+  const ch = trimmed[0];
+  if (ch !== '`' && ch !== '~') return null;
+  let count = 0;
+  while (count < trimmed.length && trimmed[count] === ch) count++;
+  if (count < 3) return null;
+  return { ch, count };
+}
+
+function isFenceCloseLine(trimmed, fenceChar, fenceLen) {
+  if (!fenceChar || !trimmed || trimmed[0] !== fenceChar) return false;
+  let count = 0;
+  while (count < trimmed.length && trimmed[count] === fenceChar) count++;
+  if (count < fenceLen) return false;
+  return trimmed.slice(count).trim() === '';
+}
+
+function cdataStartsBeforeFence(line) {
+  const cdataIdx = line.toLowerCase().indexOf('<![cdata[');
+  if (cdataIdx < 0) return false;
+  const fenceIdx = Math.min(
+    line.indexOf('```') >= 0 ? line.indexOf('```') : Infinity,
+    line.indexOf('~~~') >= 0 ? line.indexOf('~~~') : Infinity,
+  );
+  return fenceIdx === Infinity || cdataIdx < fenceIdx;
+}
+
+function updateCDATAStateLine(inCDATA, line) {
+  const lower = line.toLowerCase();
+  let pos = 0;
+  let state = inCDATA;
+  while (pos < lower.length) {
+    if (state) {
+      const end = lower.indexOf(']]>', pos);
+      if (end < 0) return true;
+      pos = end + ']]>'.length;
+      state = false;
+      continue;
+    }
+    const start = lower.indexOf('<![cdata[', pos);
+    if (start < 0) return false;
+    pos = start + '<![cdata['.length;
+    state = true;
+  }
+  return state;
 }
 
 function parseMarkupToolCalls(text) {
@@ -44,12 +139,12 @@ function normalizeDSMLToolCallMarkup(text) {
     return { text: '', ok: true };
   }
   const styles = toolMarkupStylesOutsideIgnored(raw);
-  if (styles.dsml && styles.canonical) {
-    return { text: raw, ok: false };
-  }
   if (!styles.dsml) {
     return { text: raw, ok: true };
   }
+  // Always normalize DSML aliases to canonical form, even when canonical
+  // tags coexist. Models frequently mix DSML wrapper tags with canonical
+  // inner tags (e.g., <｜tool_calls><invoke name="...">).
   return {
     text: replaceDSMLToolMarkupOutsideIgnored(raw),
     ok: true,
@@ -71,6 +166,24 @@ const DSML_TOOL_MARKUP_ALIASES = [
   { from: '</|dsml|invoke>', to: '</invoke>' },
   { from: '<|dsml|parameter', to: '<parameter' },
   { from: '</|dsml|parameter>', to: '</parameter>' },
+  { from: '<dsml|tool_calls', to: '<tool_calls' },
+  { from: '</dsml|tool_calls>', to: '</tool_calls>' },
+  { from: '<dsml|invoke', to: '<invoke' },
+  { from: '</dsml|invoke>', to: '</invoke>' },
+  { from: '<dsml|parameter', to: '<parameter' },
+  { from: '</dsml|parameter>', to: '</parameter>' },
+  { from: '<|tool_calls', to: '<tool_calls' },
+  { from: '</|tool_calls>', to: '</tool_calls>' },
+  { from: '<|invoke', to: '<invoke' },
+  { from: '</|invoke>', to: '</invoke>' },
+  { from: '<|parameter', to: '<parameter' },
+  { from: '</|parameter>', to: '</parameter>' },
+  { from: '<｜tool_calls', to: '<tool_calls' },
+  { from: '</｜tool_calls>', to: '</tool_calls>' },
+  { from: '<｜invoke', to: '<invoke' },
+  { from: '</｜invoke>', to: '</invoke>' },
+  { from: '<｜parameter', to: '<parameter' },
+  { from: '</｜parameter>', to: '</parameter>' },
 ];
 
 const CANONICAL_TOOL_MARKUP_PREFIXES = [
@@ -190,7 +303,8 @@ function findXmlElementBlocks(text, tag) {
     }
     const end = findMatchingXmlEndTagOutsideCDATA(source, name, start.bodyStart);
     if (!end) {
-      break;
+      pos = start.bodyStart;
+      continue;
     }
     out.push({
       attrs: start.attrs,

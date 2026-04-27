@@ -124,7 +124,8 @@ func findXMLElementBlocks(text, tag string) []xmlElementBlock {
 		}
 		closeStart, closeEnd, ok := findMatchingXMLEndTagOutsideCDATA(text, tag, bodyStart)
 		if !ok {
-			break
+			pos = bodyStart
+			continue
 		}
 		out = append(out, xmlElementBlock{
 			Attrs: attrs,

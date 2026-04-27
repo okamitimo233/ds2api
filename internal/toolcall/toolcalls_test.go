@@ -53,11 +53,16 @@ func TestParseToolCallsSupportsDSMLShellWithCanonicalExampleInCDATA(t *testing.T
 	}
 }
 
-func TestParseToolCallsRejectsMixedDSMLAndCanonicalToolTags(t *testing.T) {
+func TestParseToolCallsNormalizesMixedDSMLAndCanonicalToolTags(t *testing.T) {
+	// Models commonly mix DSML wrapper tags with canonical inner tags.
+	// These should be normalized and parsed, not rejected.
 	text := `<|DSML|tool_calls><invoke name="Bash"><|DSML|parameter name="command">pwd</|DSML|parameter></invoke></|DSML|tool_calls>`
 	calls := ParseToolCalls(text, []string{"Bash"})
-	if len(calls) != 0 {
-		t.Fatalf("expected mixed DSML/XML tool tags to be rejected, got %#v", calls)
+	if len(calls) != 1 {
+		t.Fatalf("expected mixed DSML/XML tool tags to be normalized and parsed, got %#v", calls)
+	}
+	if calls[0].Name != "Bash" || calls[0].Input["command"] != "pwd" {
+		t.Fatalf("unexpected mixed DSML parse result: %#v", calls[0])
 	}
 }
 
@@ -436,5 +441,27 @@ func TestParseToolCallsParsesAfterFourBacktickFence(t *testing.T) {
 	}
 	if res.Calls[0].Name != "search" {
 		t.Fatalf("expected non-fenced tool call to be parsed, got %#v", res.Calls[0])
+	}
+}
+
+func TestParseToolCallsSkipsProseMentionOfSameWrapperVariant(t *testing.T) {
+	text := strings.Join([]string{
+		"Summary: support canonical <tool_calls> and DSML <|DSML|tool_calls> wrappers.",
+		"",
+		"<|DSML|tool_calls>",
+		"<|DSML|invoke name=\"Bash\">",
+		"<|DSML|parameter name=\"command\"><![CDATA[git status]]></|DSML|parameter>",
+		"</|DSML|invoke>",
+		"</|DSML|tool_calls>",
+	}, "\n")
+	res := ParseToolCallsDetailed(text, []string{"Bash"})
+	if len(res.Calls) != 1 {
+		t.Fatalf("expected one parsed call after prose mention, got %#v", res.Calls)
+	}
+	if res.Calls[0].Name != "Bash" {
+		t.Fatalf("expected Bash call, got %#v", res.Calls[0])
+	}
+	if got, _ := res.Calls[0].Input["command"].(string); got != "git status" {
+		t.Fatalf("expected command to parse, got %q", got)
 	}
 }
