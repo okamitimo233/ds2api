@@ -219,3 +219,33 @@ func (d failingOrCompletionDoer) Do(req *http.Request) (*http.Response, error) {
 	}
 	return nil, errors.New("forced stream failure")
 }
+
+func TestAutoContinuePreservesIncompleteStateWhenNextChunkOmitsStatus(t *testing.T) {
+	initialBody := strings.Join([]string{
+		`data: {"response_message_id":321,"v":{"response":{"message_id":321,"status":"INCOMPLETE"}}}`,
+		`data: {"p":"response/content","v":{"text":"continued"}}`,
+		`data: [DONE]`,
+	}, "\n") + "\n"
+
+	var continueCalls atomic.Int32
+	body := newAutoContinueBody(context.Background(), io.NopCloser(strings.NewReader(initialBody)), "session-123", 8, func(context.Context, string, int) (*http.Response, error) {
+		continueCalls.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(
+				`data: {"response_message_id":322,"p":"response/status","v":"FINISHED"}` + "\n" +
+					`data: [DONE]` + "\n",
+			)),
+		}, nil
+	})
+	defer func() { _ = body.Close() }()
+
+	_, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read body failed: %v", err)
+	}
+	if continueCalls.Load() != 1 {
+		t.Fatalf("expected exactly one continue call, got %d", continueCalls.Load())
+	}
+}

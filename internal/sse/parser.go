@@ -244,9 +244,27 @@ func appendChunkValueContent(v any, partType string, newType *string, parts *[]C
 		}
 		*parts = append(*parts, pp...)
 	case map[string]any:
+		if appendObjectContentByPath(path, val, partType, parts) {
+			return false
+		}
 		appendWrappedFragments(val, partType, newType, parts)
 	}
 	return false
+}
+
+func appendObjectContentByPath(path string, val map[string]any, partType string, parts *[]ContentPart) bool {
+	if path != "response/content" && path != "response/thinking_content" && path != "" {
+		return false
+	}
+	text, _ := val["text"].(string)
+	if text == "" {
+		text, _ = val["content"].(string)
+	}
+	if text == "" {
+		return false
+	}
+	appendContentPart(parts, text, partType)
+	return true
 }
 
 func appendWrappedFragments(val map[string]any, partType string, newType *string, parts *[]ContentPart) {

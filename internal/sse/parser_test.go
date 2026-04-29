@@ -163,3 +163,44 @@ func TestParseSSEChunkForContentStripsLeakedThinkTagsFromText(t *testing.T) {
 		t.Fatalf("expected leaked think tag to be stripped, got %#v", parts[0])
 	}
 }
+
+func TestParseSSEChunkForContentResponseContentObjectShape(t *testing.T) {
+	chunk := map[string]any{
+		"p": "response/content",
+		"v": map[string]any{"text": "对象内容"},
+	}
+	parts, finished, _ := ParseSSEChunkForContent(chunk, false, "text")
+	if finished {
+		t.Fatal("expected unfinished")
+	}
+	if len(parts) != 1 || parts[0].Text != "对象内容" || parts[0].Type != "text" {
+		t.Fatalf("unexpected parts: %#v", parts)
+	}
+}
+
+func TestParseSSEChunkForThinkingContentObjectShape(t *testing.T) {
+	chunk := map[string]any{
+		"p": "response/thinking_content",
+		"v": map[string]any{"content": "对象思考"},
+	}
+	parts, finished, _ := ParseSSEChunkForContent(chunk, true, "thinking")
+	if finished {
+		t.Fatal("expected unfinished")
+	}
+	if len(parts) != 1 || parts[0].Text != "对象思考" || parts[0].Type != "thinking" {
+		t.Fatalf("unexpected parts: %#v", parts)
+	}
+}
+
+func TestParseSSEChunkForContentObjectShapeWithoutPath(t *testing.T) {
+	chunk := map[string]any{
+		"v": map[string]any{"text": "无路径对象内容"},
+	}
+	parts, finished, _ := ParseSSEChunkForContent(chunk, false, "text")
+	if finished {
+		t.Fatal("expected unfinished")
+	}
+	if len(parts) != 1 || parts[0].Text != "无路径对象内容" || parts[0].Type != "text" {
+		t.Fatalf("unexpected parts: %#v", parts)
+	}
+}
