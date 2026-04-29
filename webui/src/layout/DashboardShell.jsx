@@ -201,6 +201,12 @@ export default function DashboardShell({ token, onLogout, config, fetchConfig, s
                         <div className="bg-background rounded-lg p-3 border border-border shadow-sm">
                             <div className="text-[9px] text-muted-foreground font-bold uppercase tracking-wider mb-1 opacity-70">{t('sidebar.version')}</div>
                             <div className="text-xs font-semibold text-foreground">{versionInfo?.current_tag || '-'}</div>
+                            {versionInfo?.source && (
+                                <div className="text-[10px] text-muted-foreground mt-0.5">source: {versionInfo.source}</div>
+                            )}
+                            {versionInfo?.latest_tag && (
+                                <div className="text-[10px] text-muted-foreground">latest release: {versionInfo.latest_tag}</div>
+                            )}
                             {versionInfo?.has_update && (
                                 <a
                                     className="inline-flex mt-1 text-[10px] text-amber-500 hover:text-amber-400"

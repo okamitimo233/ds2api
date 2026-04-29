@@ -126,6 +126,32 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+
+      - name: Verify GHCR latest tag points to current release
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${{ github.repository }}"
+          TAG_REF="${IMAGE}:${RELEASE_TAG}"
+          LATEST_REF="${IMAGE}:latest"
+
+          # GHCR tag updates can be eventually consistent right after multi-arch push.
+          # Retry for a short window to avoid false negatives caused by propagation delay.
+          for i in {1..12}; do
+            TAG_DIGEST="$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "${TAG_REF}" 2>/dev/null | tr -d '"' || true)"
+            LATEST_DIGEST="$(docker buildx imagetools inspect --format '{{json .Manifest.Digest}}' "${LATEST_REF}" 2>/dev/null | tr -d '"' || true)"
+
+            if [ -n "${TAG_DIGEST}" ] && [ -n "${LATEST_DIGEST}" ] && [ "${TAG_DIGEST}" = "${LATEST_DIGEST}" ]; then
+              echo "Verified ${LATEST_REF} -> ${RELEASE_TAG} (${TAG_DIGEST})."
+              exit 0
+            fi
+
+            echo "Waiting for GHCR tag propagation (${i}/12): ${TAG_REF}=${TAG_DIGEST:-<empty>} ${LATEST_REF}=${LATEST_DIGEST:-<empty>}" >&2
+            sleep 10
+          done
+
+          echo "Digest mismatch after retries: ${TAG_REF}=${TAG_DIGEST:-<empty>}, ${LATEST_REF}=${LATEST_DIGEST:-<empty>}" >&2
+          exit 1
+
       - name: Export Docker image archives for release assets
         run: |
           set -euo pipefail
