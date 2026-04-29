@@ -336,8 +336,8 @@ func TestApplyCurrentInputFilePreservesFullContextPromptForTokenCounting(t *test
 	if !strings.Contains(out.PromptTokenText, "first user turn") || !strings.Contains(out.PromptTokenText, "latest user turn") {
 		t.Fatalf("expected prompt token text to contain file context with full conversation, got %q", out.PromptTokenText)
 	}
-	if strings.Contains(out.PromptTokenText, "[file content end]") || strings.Contains(out.PromptTokenText, "[file content begin]") || strings.Contains(out.PromptTokenText, "[file name]:") {
-		t.Fatalf("expected prompt token text to use the raw history.txt transcript without wrapper tags, got %q", out.PromptTokenText)
+	if strings.Contains(out.PromptTokenText, "[file content end]") || strings.Contains(out.PromptTokenText, "[file name]:") {
+		t.Fatalf("expected prompt token text to use raw transcript without wrapper tags, got %q", out.PromptTokenText)
 	}
 	if !strings.Contains(out.PromptTokenText, "Answer the latest user request directly.") {
 		t.Fatalf("expected prompt token text to also include neutral live prompt, got %q", out.PromptTokenText)

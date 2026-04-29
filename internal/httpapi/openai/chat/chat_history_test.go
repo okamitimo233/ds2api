@@ -126,6 +126,7 @@ func TestStartChatHistoryRecoversFromTransientWriteFailure(t *testing.T) {
 	session := startChatHistory(historyStore, req, a, stdReq)
 	if session == nil {
 		t.Fatalf("expected session even when initial persistence fails")
+		return
 	}
 	if session.disabled {
 		t.Fatalf("expected session to remain active after transient start failure")
