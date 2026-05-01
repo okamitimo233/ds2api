@@ -158,11 +158,13 @@ func TestStartParsedLinePumpNonSSELines(t *testing.T) {
 
 func TestStartParsedLinePumpThinkingDisabled(t *testing.T) {
 	body := strings.NewReader(
-		"data: {\"p\":\"response/thinking_content\",\"v\":\"thought\"}\n" +
+		"data: {\"p\":\"response/fragments\",\"o\":\"APPEND\",\"v\":[{\"type\":\"THINK\",\"content\":\"思\"}]}\n" +
+			"data: {\"p\":\"response/fragments/-1/content\",\"v\":\"考\"}\n" +
+			"data: {\"v\":\"隐藏\"}\n" +
+			"data: {\"p\":\"response/fragments\",\"o\":\"APPEND\",\"v\":[{\"type\":\"RESPONSE\",\"content\":\"答\"}]}\n" +
 			"data: {\"p\":\"response/content\",\"v\":\"response\"}\n" +
 			"data: [DONE]\n",
 	)
-	// With thinking disabled, thinking content should still be emitted but marked differently
 	results, done := StartParsedLinePump(context.Background(), body, false, "text")
 
 	var parts []ContentPart
@@ -171,8 +173,15 @@ func TestStartParsedLinePumpThinkingDisabled(t *testing.T) {
 	}
 	<-done
 
-	if len(parts) < 1 {
-		t.Fatalf("expected at least 1 part, got %d", len(parts))
+	got := strings.Builder{}
+	for _, p := range parts {
+		if p.Type != "text" {
+			t.Fatalf("expected only text parts with thinking disabled, got %#v", parts)
+		}
+		got.WriteString(p.Text)
+	}
+	if got.String() != "答response" {
+		t.Fatalf("expected hidden thinking to be dropped, got %q from %#v", got.String(), parts)
 	}
 }
 

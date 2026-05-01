@@ -248,6 +248,9 @@ function replaceDSMLToolMarkupOutsideIgnored(text) {
     if (tag) {
       if (tag.dsmlLike) {
         out += `<${tag.closing ? '/' : ''}${tag.name}${raw.slice(tag.nameEnd, tag.end + 1)}`;
+        if (raw[tag.end] !== '>') {
+          out += '>';
+        }
       } else {
         out += raw.slice(tag.start, tag.end + 1);
       }
@@ -424,31 +427,42 @@ function scanToolMarkupTagAt(text, start) {
   }
   const lower = raw.toLowerCase();
   let i = start + 1;
+  while (i < raw.length && raw[i] === '<') {
+    i += 1;
+  }
   const closing = raw[i] === '/';
   if (closing) {
     i += 1;
   }
-  let dsmlLike = false;
-  if (i < raw.length && isToolMarkupPipe(raw[i])) {
-    dsmlLike = true;
-    i += 1;
-  }
-  if (lower.startsWith('dsml', i)) {
-    dsmlLike = true;
-    i += 'dsml'.length;
-    while (i < raw.length && isToolMarkupSeparator(raw[i])) {
-      i += 1;
-    }
-  }
+  const prefix = consumeToolMarkupNamePrefix(raw, lower, i);
+  i = prefix.next;
+  const dsmlLike = prefix.dsmlLike;
   const { name, len } = matchToolMarkupName(lower, i);
   if (!name) {
     return null;
   }
-  const nameEnd = i + len;
+  const originalNameEnd = i + len;
+  let nameEnd = originalNameEnd;
+  while (nameEnd < raw.length && isToolMarkupPipe(raw[nameEnd])) {
+    nameEnd += 1;
+  }
+  const hasTrailingPipe = nameEnd > originalNameEnd;
   if (!hasXmlTagBoundary(raw, nameEnd)) {
     return null;
   }
-  const end = findXmlTagEnd(raw, nameEnd);
+  let end = findXmlTagEnd(raw, nameEnd);
+  if (end < 0) {
+    if (!hasTrailingPipe) {
+      return null;
+    }
+    end = nameEnd - 1;
+  }
+  if (hasTrailingPipe) {
+    const nextLT = raw.indexOf('<', nameEnd);
+    if (nextLT >= 0 && end >= nextLT) {
+      end = nameEnd - 1;
+    }
+  }
   if (end < 0) {
     return null;
   }
@@ -520,37 +534,94 @@ function findPartialToolMarkupStart(text) {
   if (lastLT < 0) {
     return -1;
   }
-  const tail = raw.slice(lastLT);
+  const start = includeDuplicateLeadingLessThan(raw, lastLT);
+  const tail = raw.slice(start);
   if (tail.includes('>')) {
     return -1;
   }
-  const lowerTail = tail.toLowerCase();
-  const candidates = [
-    '<tool_calls', '<invoke', '<parameter',
-    '<|tool_calls', '<|invoke', '<|parameter',
-    '<｜tool_calls', '<｜invoke', '<｜parameter',
-    '<|dsml|tool_calls', '<|dsml|invoke', '<|dsml|parameter',
-    '<｜dsml|tool_calls', '<｜dsml|invoke', '<｜dsml|parameter',
-    '<dsmltool_calls', '<dsmlinvoke', '<dsmlparameter',
-    '<dsml tool_calls', '<dsml invoke', '<dsml parameter',
-    '<dsml|tool_calls', '<dsml|invoke', '<dsml|parameter',
-    '<|dsmltool_calls', '<|dsmlinvoke', '<|dsmlparameter',
-    '<|dsml tool_calls', '<|dsml invoke', '<|dsml parameter',
-  ];
-  for (const candidate of candidates) {
-    if (candidate.startsWith(lowerTail)) {
-      return lastLT;
-    }
+  return isPartialToolMarkupTagPrefix(tail) ? start : -1;
+}
+
+function includeDuplicateLeadingLessThan(text, idx) {
+  let out = idx;
+  while (out > 0 && text[out - 1] === '<') {
+    out -= 1;
   }
-  return -1;
+  return out;
 }
 
 function isToolMarkupPipe(ch) {
   return ch === '|' || ch === '｜';
 }
 
-function isToolMarkupSeparator(ch) {
-  return ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n' || isToolMarkupPipe(ch);
+function isPartialToolMarkupTagPrefix(text) {
+  const raw = toStringSafe(text);
+  if (!raw || raw[0] !== '<' || raw.includes('>')) {
+    return false;
+  }
+  const lower = raw.toLowerCase();
+  let i = 1;
+  while (i < raw.length && raw[i] === '<') {
+    i += 1;
+  }
+  if (i >= raw.length) {
+    return true;
+  }
+  if (raw[i] === '/') {
+    i += 1;
+  }
+  while (i <= raw.length) {
+    if (i === raw.length) {
+      return true;
+    }
+    if (hasToolMarkupNamePrefix(lower.slice(i))) {
+      return true;
+    }
+    if ('dsml'.startsWith(lower.slice(i))) {
+      return true;
+    }
+    const next = consumeToolMarkupNamePrefixOnce(raw, lower, i);
+    if (!next.ok) {
+      return false;
+    }
+    i = next.next;
+  }
+  return false;
+}
+
+function consumeToolMarkupNamePrefix(raw, lower, idx) {
+  let next = idx;
+  let dsmlLike = false;
+  while (true) {
+    const consumed = consumeToolMarkupNamePrefixOnce(raw, lower, next);
+    if (!consumed.ok) {
+      return { next, dsmlLike };
+    }
+    next = consumed.next;
+    dsmlLike = true;
+  }
+}
+
+function consumeToolMarkupNamePrefixOnce(raw, lower, idx) {
+  if (idx < raw.length && isToolMarkupPipe(raw[idx])) {
+    return { next: idx + 1, ok: true };
+  }
+  if (idx < raw.length && [' ', '\t', '\r', '\n'].includes(raw[idx])) {
+    return { next: idx + 1, ok: true };
+  }
+  if (lower.startsWith('dsml', idx)) {
+    return { next: idx + 'dsml'.length, ok: true };
+  }
+  return { next: idx, ok: false };
+}
+
+function hasToolMarkupNamePrefix(lowerTail) {
+  for (const name of TOOL_MARKUP_NAMES) {
+    if (lowerTail.startsWith(name) || name.startsWith(lowerTail)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function matchToolMarkupName(lower, start) {

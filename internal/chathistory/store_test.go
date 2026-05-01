@@ -493,3 +493,112 @@ func TestStoreWritesOnlyChangedDetailFiles(t *testing.T) {
 		t.Fatalf("expected untouched detail file to remain byte-identical")
 	}
 }
+
+func TestUpdatePreservesContentWhenNewContentIsEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chat_history.json")
+	store := New(path)
+
+	started, err := store.Start(StartParams{
+		CallerID:  "caller:abc",
+		Model:     "deepseek-v4-flash",
+		Stream:    true,
+		UserInput: "hello",
+	})
+	if err != nil {
+		t.Fatalf("start entry failed: %v", err)
+	}
+
+	if _, err := store.Update(started.ID, UpdateParams{
+		Status:           "streaming",
+		ReasoningContent: "let me think",
+		Content:          "I'll help you with that.",
+	}); err != nil {
+		t.Fatalf("progress update failed: %v", err)
+	}
+
+	updated, err := store.Update(started.ID, UpdateParams{
+		Status:    "success",
+		Content:   "",
+		Completed: true,
+	})
+	if err != nil {
+		t.Fatalf("success update failed: %v", err)
+	}
+
+	if updated.Content != "I'll help you with that." {
+		t.Fatalf("expected content to be preserved, got %q", updated.Content)
+	}
+	if updated.ReasoningContent != "let me think" {
+		t.Fatalf("expected reasoning content to be preserved, got %q", updated.ReasoningContent)
+	}
+
+	full, err := store.Get(started.ID)
+	if err != nil {
+		t.Fatalf("get entry failed: %v", err)
+	}
+	if full.Content != "I'll help you with that." {
+		t.Fatalf("expected persisted content to be preserved, got %q", full.Content)
+	}
+	if full.ReasoningContent != "let me think" {
+		t.Fatalf("expected persisted reasoning content to be preserved, got %q", full.ReasoningContent)
+	}
+}
+
+func TestUpdateAllowsSettingContentFromEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chat_history.json")
+	store := New(path)
+
+	started, err := store.Start(StartParams{
+		CallerID:  "caller:abc",
+		Model:     "deepseek-v4-flash",
+		Stream:    true,
+		UserInput: "hello",
+	})
+	if err != nil {
+		t.Fatalf("start entry failed: %v", err)
+	}
+
+	updated, err := store.Update(started.ID, UpdateParams{
+		Status:  "success",
+		Content: "final answer",
+	})
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if updated.Content != "final answer" {
+		t.Fatalf("expected content to be set, got %q", updated.Content)
+	}
+}
+
+func TestUpdateAllowsOverwritingContentWithNewValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chat_history.json")
+	store := New(path)
+
+	started, err := store.Start(StartParams{
+		CallerID:  "caller:abc",
+		Model:     "deepseek-v4-flash",
+		Stream:    true,
+		UserInput: "hello",
+	})
+	if err != nil {
+		t.Fatalf("start entry failed: %v", err)
+	}
+
+	if _, err := store.Update(started.ID, UpdateParams{
+		Status:  "streaming",
+		Content: "partial",
+	}); err != nil {
+		t.Fatalf("first update failed: %v", err)
+	}
+
+	updated, err := store.Update(started.ID, UpdateParams{
+		Status:  "success",
+		Content: "final answer",
+	})
+	if err != nil {
+		t.Fatalf("second update failed: %v", err)
+	}
+	if updated.Content != "final answer" {
+		t.Fatalf("expected content to be overwritten, got %q", updated.Content)
+	}
+}

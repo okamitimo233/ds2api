@@ -9,8 +9,7 @@ import (
 
 const (
 	parsedLineBufferSize = 128
-	scannerBufferSize    = 64 * 1024
-	maxScannerLineSize   = 2 * 1024 * 1024
+	lineReaderBufferSize = 64 * 1024
 	minFlushChars        = 160
 	maxFlushWait         = 80 * time.Millisecond
 )
@@ -29,8 +28,8 @@ func StartParsedLinePump(ctx context.Context, body io.Reader, thinkingEnabled bo
 			eof  bool
 		}
 		lineCh := make(chan scanItem, 1)
-		stopScanner := make(chan struct{})
-		defer close(stopScanner)
+		stopReader := make(chan struct{})
+		defer close(stopReader)
 		go func() {
 			sendScanItem := func(item scanItem) bool {
 				select {
@@ -38,20 +37,28 @@ func StartParsedLinePump(ctx context.Context, body io.Reader, thinkingEnabled bo
 					return true
 				case <-ctx.Done():
 					return false
-				case <-stopScanner:
+				case <-stopReader:
 					return false
 				}
 			}
 			defer close(lineCh)
-			scanner := bufio.NewScanner(body)
-			scanner.Buffer(make([]byte, 0, scannerBufferSize), maxScannerLineSize)
-			for scanner.Scan() {
-				line := append([]byte{}, scanner.Bytes()...)
-				if !sendScanItem(scanItem{line: line}) {
+			reader := bufio.NewReaderSize(body, lineReaderBufferSize)
+			for {
+				line, err := reader.ReadBytes('\n')
+				if len(line) > 0 {
+					line = append([]byte{}, line...)
+					if !sendScanItem(scanItem{line: line}) {
+						return
+					}
+				}
+				if err != nil {
+					if err == io.EOF {
+						err = nil
+					}
+					_ = sendScanItem(scanItem{err: err, eof: true})
 					return
 				}
 			}
-			_ = sendScanItem(scanItem{err: scanner.Err(), eof: true})
 		}()
 
 		ticker := time.NewTicker(maxFlushWait)

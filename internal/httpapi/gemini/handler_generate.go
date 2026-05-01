@@ -227,7 +227,7 @@ func (h *Handler) handleNonStreamGenerateContent(w http.ResponseWriter, resp *ht
 //nolint:unused // retained for native Gemini non-stream handling path.
 func buildGeminiGenerateContentResponse(model, finalPrompt, finalThinking, finalText string, toolNames []string) map[string]any {
 	parts := buildGeminiPartsFromFinal(finalText, finalThinking, toolNames)
-	usage := buildGeminiUsage(finalPrompt, finalThinking, finalText)
+	usage := buildGeminiUsage(model, finalPrompt, finalThinking, finalText)
 	return map[string]any{
 		"candidates": []map[string]any{
 			{
@@ -245,10 +245,10 @@ func buildGeminiGenerateContentResponse(model, finalPrompt, finalThinking, final
 }
 
 //nolint:unused // retained for native Gemini non-stream handling path.
-func buildGeminiUsage(finalPrompt, finalThinking, finalText string) map[string]any {
-	promptTokens := util.EstimateTokens(finalPrompt)
-	reasoningTokens := util.EstimateTokens(finalThinking)
-	completionTokens := util.EstimateTokens(finalText)
+func buildGeminiUsage(model, finalPrompt, finalThinking, finalText string) map[string]any {
+	promptTokens := util.CountPromptTokens(finalPrompt, model)
+	reasoningTokens := util.CountOutputTokens(finalThinking, model)
+	completionTokens := util.CountOutputTokens(finalText, model)
 	return map[string]any{
 		"promptTokenCount":     promptTokens,
 		"candidatesTokenCount": reasoningTokens + completionTokens,

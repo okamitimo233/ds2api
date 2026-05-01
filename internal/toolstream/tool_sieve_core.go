@@ -1,10 +1,6 @@
 package toolstream
 
-import (
-	"strings"
-
-	"ds2api/internal/toolcall"
-)
+import "ds2api/internal/toolcall"
 
 func ProcessChunk(state *State, chunk string, toolNames []string) []Event {
 	if state == nil {
@@ -174,29 +170,25 @@ func findToolSegmentStart(state *State, s string) int {
 	if s == "" {
 		return -1
 	}
-	lower := strings.ToLower(s)
 	offset := 0
 	for {
-		bestKeyIdx := -1
-		matchedTag := ""
-		for _, tag := range xmlToolTagsToDetect {
-			idx := strings.Index(lower[offset:], tag)
-			if idx >= 0 {
-				idx += offset
-				if bestKeyIdx < 0 || idx < bestKeyIdx {
-					bestKeyIdx = idx
-					matchedTag = tag
-				}
-			}
-		}
-		if bestKeyIdx < 0 {
+		tag, ok := toolcall.FindToolMarkupTagOutsideIgnored(s, offset)
+		if !ok {
 			return -1
 		}
-		if !insideCodeFenceWithState(state, s[:bestKeyIdx]) {
-			return bestKeyIdx
+		start := includeDuplicateLeadingLessThan(s, tag.Start)
+		if !insideCodeFenceWithState(state, s[:start]) {
+			return start
 		}
-		offset = bestKeyIdx + len(matchedTag)
+		offset = tag.End + 1
 	}
+}
+
+func includeDuplicateLeadingLessThan(s string, idx int) int {
+	for idx > 0 && s[idx-1] == '<' {
+		idx--
+	}
+	return idx
 }
 
 func consumeToolCapture(state *State, toolNames []string) (prefix string, calls []toolcall.ParsedToolCall, suffix string, ready bool) {

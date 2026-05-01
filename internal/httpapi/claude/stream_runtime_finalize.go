@@ -109,7 +109,7 @@ func (s *claudeStreamRuntime) finalize(stopReason string) {
 		}
 	}
 
-	outputTokens := util.EstimateTokens(finalThinking) + util.EstimateTokens(finalText)
+	outputTokens := util.CountOutputTokens(finalThinking, s.model) + util.CountOutputTokens(finalText, s.model)
 	s.send("message_delta", map[string]any{
 		"type": "message_delta",
 		"delta": map[string]any{

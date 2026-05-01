@@ -98,6 +98,14 @@ func NewApp() (*App, error) {
 	r.Get("/v1/responses/{response_id}", responsesHandler.GetResponseByID)
 	r.Post("/v1/files", filesHandler.UploadFile)
 	r.Post("/v1/embeddings", embeddingsHandler.Embeddings)
+	// Root OpenAI aliases support clients configured with the bare DS2API service URL.
+	r.Get("/models", modelsHandler.ListModels)
+	r.Get("/models/{model_id}", modelsHandler.GetModel)
+	r.Post("/chat/completions", chatHandler.ChatCompletions)
+	r.Post("/responses", responsesHandler.Responses)
+	r.Get("/responses/{response_id}", responsesHandler.GetResponseByID)
+	r.Post("/files", filesHandler.UploadFile)
+	r.Post("/embeddings", embeddingsHandler.Embeddings)
 	claude.RegisterRoutes(r, claudeHandler)
 	gemini.RegisterRoutes(r, geminiHandler)
 	r.Route("/admin", func(ar chi.Router) {

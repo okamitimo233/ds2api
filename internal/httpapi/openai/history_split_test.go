@@ -14,6 +14,7 @@ import (
 	"ds2api/internal/auth"
 	dsclient "ds2api/internal/deepseek/client"
 	"ds2api/internal/promptcompat"
+	"ds2api/internal/util"
 )
 
 func historySplitTestMessages() []any {
@@ -298,6 +299,52 @@ func TestApplyCurrentInputFileUploadsFirstTurnWithInjectedWrapper(t *testing.T) 
 	if len(out.RefFileIDs) != 1 || out.RefFileIDs[0] != "file-inline-1" {
 		t.Fatalf("expected current input file id in ref_file_ids, got %#v", out.RefFileIDs)
 	}
+	if !strings.Contains(out.PromptTokenText, "first turn content that is long enough") {
+		t.Fatalf("expected prompt token text to preserve original full context, got %q", out.PromptTokenText)
+	}
+}
+
+func TestApplyCurrentInputFilePreservesFullContextPromptForTokenCounting(t *testing.T) {
+	ds := &inlineUploadDSStub{}
+	h := &openAITestSurface{
+		Store: mockOpenAIConfig{
+			wideInput:           true,
+			currentInputEnabled: true,
+			currentInputMin:     0,
+			thinkingInjection:   boolPtr(true),
+		},
+		DS: ds,
+	}
+	req := map[string]any{
+		"model":    "deepseek-v4-flash",
+		"messages": historySplitTestMessages(),
+	}
+	stdReq, err := promptcompat.NormalizeOpenAIChatRequest(h.Store, req, "")
+	if err != nil {
+		t.Fatalf("normalize failed: %v", err)
+	}
+
+	out, err := h.applyCurrentInputFile(context.Background(), &auth.RequestAuth{DeepSeekToken: "token"}, stdReq)
+	if err != nil {
+		t.Fatalf("apply current input file failed: %v", err)
+	}
+	if out.FinalPrompt == stdReq.FinalPrompt {
+		t.Fatalf("expected live prompt to be rewritten after current input file")
+	}
+	// PromptTokenText must include the uploaded file content (which contains the full context)
+	// plus the neutral live prompt — reflecting the actual downstream token cost.
+	if !strings.Contains(out.PromptTokenText, "first user turn") || !strings.Contains(out.PromptTokenText, "latest user turn") {
+		t.Fatalf("expected prompt token text to contain file context with full conversation, got %q", out.PromptTokenText)
+	}
+	if strings.Contains(out.PromptTokenText, "[file content end]") || strings.Contains(out.PromptTokenText, "[file name]:") {
+		t.Fatalf("expected prompt token text to use raw transcript without wrapper tags, got %q", out.PromptTokenText)
+	}
+	if !strings.Contains(out.PromptTokenText, "Answer the latest user request directly.") {
+		t.Fatalf("expected prompt token text to also include neutral live prompt, got %q", out.PromptTokenText)
+	}
+	if strings.Contains(out.FinalPrompt, "first user turn") || strings.Contains(out.FinalPrompt, "latest user turn") {
+		t.Fatalf("expected live prompt to hide original turns, got %q", out.FinalPrompt)
+	}
 }
 
 func TestApplyCurrentInputFileUploadsFullContextFile(t *testing.T) {
@@ -434,6 +481,16 @@ func TestChatCompletionsCurrentInputFileUploadsContextAndKeepsNeutralPrompt(t *t
 	if len(refIDs) == 0 || refIDs[0] != "file-inline-1" {
 		t.Fatalf("expected uploaded current input file to be first ref_file_id, got %#v", ds.completionReq["ref_file_ids"])
 	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	usage, _ := body["usage"].(map[string]any)
+	promptTokens := int(usage["prompt_tokens"].(float64))
+	neutralCount := util.CountPromptTokens(promptText, "deepseek-v4-flash")
+	if promptTokens <= neutralCount {
+		t.Fatalf("expected prompt_tokens to exceed neutral live prompt count (includes file context), got=%d neutral=%d", promptTokens, neutralCount)
+	}
 }
 
 func TestResponsesCurrentInputFileUploadsContextAndKeepsNeutralPrompt(t *testing.T) {
@@ -475,6 +532,16 @@ func TestResponsesCurrentInputFileUploadsContextAndKeepsNeutralPrompt(t *testing
 	}
 	if strings.Contains(promptText, "first user turn") || strings.Contains(promptText, "latest user turn") {
 		t.Fatalf("expected prompt to hide original turns, got %s", promptText)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	usage, _ := body["usage"].(map[string]any)
+	inputTokens := int(usage["input_tokens"].(float64))
+	neutralCount := util.CountPromptTokens(promptText, "deepseek-v4-flash")
+	if inputTokens <= neutralCount {
+		t.Fatalf("expected input_tokens to exceed neutral live prompt count (includes file context), got=%d neutral=%d", inputTokens, neutralCount)
 	}
 }
 

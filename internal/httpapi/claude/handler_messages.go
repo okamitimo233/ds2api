@@ -206,6 +206,7 @@ func (h *Handler) handleClaudeStreamRealtime(w http.ResponseWriter, r *http.Requ
 		h.compatStripReferenceMarkers(),
 		toolNames,
 		toolsRaw,
+		buildClaudePromptTokenText(messages, thinkingEnabled),
 	)
 	streamRuntime.sendMessageStart()
 

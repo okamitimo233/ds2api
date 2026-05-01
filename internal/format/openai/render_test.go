@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"ds2api/internal/toolcall"
+	"ds2api/internal/util"
 )
 
 func TestBuildResponseObjectKeepsFencedToolPayloadAsText(t *testing.T) {
@@ -175,5 +176,19 @@ func TestBuildResponseObjectWithToolCallsCoercesSchemaDeclaredStringArguments(t 
 	}
 	if args["content"] != `["a",1]` {
 		t.Fatalf("expected response content stringified by schema, got %#v", args["content"])
+	}
+}
+
+func TestBuildChatUsageForModelUsesConservativePromptCount(t *testing.T) {
+	prompt := strings.Repeat("上下文token ", 40)
+	usage := BuildChatUsageForModel("deepseek-v4-flash", prompt, "", "ok", 0)
+	promptTokens, _ := usage["prompt_tokens"].(int)
+	if promptTokens <= util.EstimateTokens(prompt) {
+		t.Fatalf("expected conservative prompt token count > rough estimate, got=%d estimate=%d", promptTokens, util.EstimateTokens(prompt))
+	}
+	totalTokens, _ := usage["total_tokens"].(int)
+	completionTokens, _ := usage["completion_tokens"].(int)
+	if totalTokens != promptTokens+completionTokens {
+		t.Fatalf("expected total tokens to add up, got usage=%#v", usage)
 	}
 }

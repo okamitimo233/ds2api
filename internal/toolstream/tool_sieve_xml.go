@@ -153,27 +153,14 @@ func findPartialXMLToolTagStart(s string) int {
 	if lastLT < 0 {
 		return -1
 	}
-	tail := s[lastLT:]
+	start := includeDuplicateLeadingLessThan(s, lastLT)
+	tail := s[start:]
 	// If there's a '>' in the tail, the tag is closed — not partial.
 	if strings.Contains(tail, ">") {
 		return -1
 	}
-	lowerTail := strings.ToLower(tail)
-	for _, tag := range []string{
-		"<tool_calls", "<invoke", "<parameter",
-		"<|tool_calls", "<|invoke", "<|parameter",
-		"<｜tool_calls", "<｜invoke", "<｜parameter",
-		"<|dsml|tool_calls", "<|dsml|invoke", "<|dsml|parameter",
-		"<｜dsml|tool_calls", "<｜dsml|invoke", "<｜dsml|parameter",
-		"<dsmltool_calls", "<dsmlinvoke", "<dsmlparameter",
-		"<dsml tool_calls", "<dsml invoke", "<dsml parameter",
-		"<dsml|tool_calls", "<dsml|invoke", "<dsml|parameter",
-		"<|dsmltool_calls", "<|dsmlinvoke", "<|dsmlparameter",
-		"<|dsml tool_calls", "<|dsml invoke", "<|dsml parameter",
-	} {
-		if strings.HasPrefix(tag, lowerTail) {
-			return lastLT
-		}
+	if toolcall.IsPartialToolMarkupTagPrefix(tail) {
+		return start
 	}
 	return -1
 }

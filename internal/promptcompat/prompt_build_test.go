@@ -88,6 +88,58 @@ func TestBuildOpenAIFinalPrompt_VercelPreparePathKeepsFinalAnswerInstruction(t *
 	}
 }
 
+func TestBuildOpenAIFinalPromptReadLikeToolIncludesCacheGuard(t *testing.T) {
+	messages := []any{
+		map[string]any{"role": "user", "content": "请读取文件"},
+	}
+	tools := []any{
+		map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "read_file",
+				"description": "Read a file",
+				"parameters": map[string]any{
+					"type": "object",
+				},
+			},
+		},
+	}
+
+	finalPrompt, _ := buildOpenAIFinalPrompt(messages, tools, "", false)
+	if !strings.Contains(finalPrompt, "Read-tool cache guard") {
+		t.Fatalf("read-like tool prompt missing cache guard: %q", finalPrompt)
+	}
+	if !strings.Contains(finalPrompt, "provides no file body") {
+		t.Fatalf("read-like tool prompt missing no-body handling: %q", finalPrompt)
+	}
+	if !strings.Contains(finalPrompt, "Do not repeatedly call the same read request") {
+		t.Fatalf("read-like tool prompt missing loop guard: %q", finalPrompt)
+	}
+}
+
+func TestBuildOpenAIFinalPromptNonReadToolOmitsCacheGuard(t *testing.T) {
+	messages := []any{
+		map[string]any{"role": "user", "content": "搜索一下"},
+	}
+	tools := []any{
+		map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        "search",
+				"description": "Search docs",
+				"parameters": map[string]any{
+					"type": "object",
+				},
+			},
+		},
+	}
+
+	finalPrompt, _ := buildOpenAIFinalPrompt(messages, tools, "", false)
+	if strings.Contains(finalPrompt, "Read-tool cache guard") {
+		t.Fatalf("non-read tool prompt should not include read cache guard: %q", finalPrompt)
+	}
+}
+
 func TestBuildOpenAIFinalPromptWithThinkingKeepsPromptUnchanged(t *testing.T) {
 	messages := []any{
 		map[string]any{"role": "user", "content": "继续回答上一个问题"},

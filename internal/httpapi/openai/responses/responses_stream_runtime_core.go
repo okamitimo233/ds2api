@@ -18,13 +18,14 @@ type responsesStreamRuntime struct {
 	rc       *http.ResponseController
 	canFlush bool
 
-	responseID  string
-	model       string
-	finalPrompt string
-	toolNames   []string
-	toolsRaw    any
-	traceID     string
-	toolChoice  promptcompat.ToolChoicePolicy
+	responseID    string
+	model         string
+	finalPrompt   string
+	refFileTokens int
+	toolNames     []string
+	toolsRaw      any
+	traceID       string
+	toolChoice    promptcompat.ToolChoicePolicy
 
 	thinkingEnabled       bool
 	searchEnabled         bool
@@ -221,6 +222,7 @@ func (s *responsesStreamRuntime) onParsed(parsed sse.LineResult) streamengine.Pa
 	}
 
 	contentSeen := false
+	batch := responsesDeltaBatch{runtime: s}
 	for _, p := range parsed.ToolDetectionThinkingParts {
 		trimmed := sse.TrimContinuationOverlap(s.toolDetectionThinking.String(), p.Text)
 		if trimmed != "" {
@@ -246,7 +248,7 @@ func (s *responsesStreamRuntime) onParsed(parsed sse.LineResult) streamengine.Pa
 				continue
 			}
 			s.thinking.WriteString(trimmed)
-			s.sendEvent("response.reasoning.delta", openaifmt.BuildResponsesReasoningDeltaPayload(s.responseID, trimmed))
+			batch.append("reasoning", trimmed)
 			continue
 		}
 
@@ -268,11 +270,13 @@ func (s *responsesStreamRuntime) onParsed(parsed sse.LineResult) streamengine.Pa
 			if trimmed == "" {
 				continue
 			}
-			s.emitTextDelta(trimmed)
+			batch.append("text", trimmed)
 			continue
 		}
+		batch.flush()
 		s.processToolStreamEvents(toolstream.ProcessChunk(&s.sieve, rawTrimmed, s.toolNames), true, true)
 	}
 
+	batch.flush()
 	return streamengine.ParsedDecision{ContentSeen: contentSeen}
 }
